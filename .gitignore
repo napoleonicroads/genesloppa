@@ -1,0 +1,13 @@
+/target
+/dist
+.DS_Store
+
+# local notes for the coding assistant
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+
+# font files are licensed; drop your own copy into fonts/
+/fonts/*.ttf
+/fonts/*.otf
+/fonts/*.ttc

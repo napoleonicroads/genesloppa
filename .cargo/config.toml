@@ -1,0 +1,3 @@
+# Lets `cargo run` launch the GUI straight from the project (finds the reference pack etc.)
+[env]
+G25_DATA = { value = "dist/genesloppa.app/Contents/Resources", relative = true }
