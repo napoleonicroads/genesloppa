@@ -10,6 +10,28 @@ It's written in Rust with no crates. The UI talks to AppKit and Core Graphics di
 the Objective-C runtime, so there's no web view and nothing to install besides the app.
 Apple Silicon only.
 
+Everything runs on your Mac. The app makes no network connections, so your DNA file never
+leaves your computer.
+
+## Download
+
+Get **genesloppa.dmg** from the [latest release](https://github.com/napoleonicroads/genesloppa/releases/latest),
+open it and drag genesloppa into Applications. It needs a Mac with Apple Silicon (M1 or newer)
+and macOS 11 or later.
+
+The app isn't signed with an Apple developer account, so macOS blocks it the first time:
+
+1. Open genesloppa. When macOS says it can't be opened, click **Done**.
+2. Go to **System Settings > Privacy & Security**, scroll down, click **Open Anyway** next to
+   the genesloppa message and enter your password.
+3. Open genesloppa again and click **Open**.
+
+If macOS says the app "is damaged", run this once in Terminal and open it again:
+
+```
+xattr -dr com.apple.quarantine /Applications/genesloppa.app
+```
+
 ## Pages
 
 - **Converter**: 23andMe, AncestryDNA, MyHeritage, FTDNA or LivingDNA files (.txt, .csv, .gz
@@ -99,6 +121,24 @@ licensed typeface and isn't included.
 | `src/logo.rs`, `src/gui/icon.rs` | the logo, and the app icon drawn from it |
 | `src/health.rs` | Health info SNPs |
 | `src/data.rs` + `data/` | built-in source sets |
+
+## Contributing
+
+Bug reports and pull requests are welcome; see `CONTRIBUTING.md`.
+
+## Credits
+
+- [Vahaduo](https://vahaduo.github.io/vahaduo/), whose admixture and distance tools the modeling
+  page is ported from.
+- [ADMIXTOOLS 2](https://uqrmaie1.github.io/admixtools/) (Maier et al. 2023), which the qpAdm
+  page follows.
+- The [Allen Ancient DNA Resource](https://reich.hms.harvard.edu/allen-ancient-dna-resource-aadr-downloadable-genotypes-present-day-and-ancient-dna-data)
+  (Mallick et al. 2024) and the [Poseidon](https://www.poseidon-adna.org/) annotations, for
+  genotypes and sample locations.
+- Global25 by Davidski ([Eurogenes](https://eurogenes.blogspot.com/)), for the coordinates
+  and population averages.
+- Illustrative DNA, for the era averages.
+- [Natural Earth](https://www.naturalearthdata.com/), for the map.
 
 ## License
 

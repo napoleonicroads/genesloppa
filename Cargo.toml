@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 description = "Raw DNA -> Global25 converter (std-only, ships with its reference data)"
 license = "MIT"
+repository = "https://github.com/napoleonicroads/genesloppa"
+readme = "README.md"
 
 [dependencies]
 
