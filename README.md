@@ -60,9 +60,12 @@ behind the converter and qpAdm). It's too big for this repo, but the release dow
 inside, so the quickest way is to install the app and build against its pack:
 
 ```
+mkdir -p dist/extras && cp /Applications/genesloppa.app/Contents/Resources/extra_* dist/extras/
 scripts/make_app.sh --pack /Applications/genesloppa.app/Contents/Resources/reference.g25pack
 open dist/genesloppa.app
 ```
+
+(The first line copies the estimated heatmap layer, the hollow "(est.)" pins, from the app.)
 
 To build the pack yourself instead, you need the AADR "HO" dataset and a Global25 individuals
 sheet:
