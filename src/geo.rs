@@ -498,6 +498,13 @@ pub fn off_heatmap(name: &str) -> bool {
     outlier || diaspora
 }
 
+/// Heat fades from FADE_START to FADE_START + FADE_LEN degrees (about 111 km each) away from
+/// the nearest placed population.
+const FADE_START: f64 = 4.5;
+const FADE_LEN: f64 = 4.5;
+/// Pull of an estimated "(est.)" population on the colours, relative to an official one.
+const EST_WEIGHT: f64 = 0.35;
+
 /// Distance from `me` to every placed population of `sheet`, then the IDW raster.
 pub fn compute(me: &[f64], sheet: &str, places: &HashMap<String, (f64, f64)>) -> Heat {
     let mut points: Vec<Point> = sheet
@@ -524,7 +531,11 @@ pub fn compute(me: &[f64], sheet: &str, places: &HashMap<String, (f64, f64)>) ->
     let (w, top, bottom) = (900usize, merc_y(LAT_TOP), merc_y(LAT_BOTTOM));
     let h = ((bottom - top) / MAP_W * w as f64).round() as usize;
     let mut rgba = vec![0u8; w * h * 4];
-    let pts: Vec<(f64, f64, f64)> = points.iter().map(|p| (p.lat, p.lon, (p.dist - dmin) / (dmax - dmin))).collect();
+    // the app's own estimates count for less than populations with official coordinates
+    let pts: Vec<(f64, f64, f64, f64)> = points
+        .iter()
+        .map(|p| (p.lat, p.lon, (p.dist - dmin) / (dmax - dmin), if p.name.ends_with("(est.)") { EST_WEIGHT } else { 1.0 }))
+        .collect();
     // rows are handed out one at a time so the slower cores don't hold things up
     let next = std::sync::Mutex::new(rgba.chunks_mut(w * 4).enumerate());
     std::thread::scope(|s| {
@@ -539,32 +550,33 @@ pub fn compute(me: &[f64], sheet: &str, places: &HashMap<String, (f64, f64)>) ->
                     let ry = top + (ri as f64 + 0.5) * (bottom - top) / h as f64;
                     let lat = inv_merc_y(ry);
                     let cl = lat.to_radians().cos();
-                    for (d, &(plat, _, _)) in dy2.iter_mut().zip(&pts) {
+                    for (d, &(plat, _, _, _)) in dy2.iter_mut().zip(&pts) {
                         let dy = lat - plat;
                         *d = dy * dy;
                     }
                     for x in 0..w {
                         let lon = (x as f64 + 0.5) / w as f64 * 360.0 - 180.0;
                         let mut nearest = f64::MAX;
-                        for ((wk, &(_, plon, _)), &dyy) in wv.iter_mut().zip(&pts).zip(&dy2) {
+                        for ((wk, &(_, plon, _, _)), &dyy) in wv.iter_mut().zip(&pts).zip(&dy2) {
                             let dx = (lon - plon) * cl;
                             let d2 = dx * dx + dyy;
                             nearest = nearest.min(d2);
                             *wk = d2;
                         }
-                        // fade out far from any sampled population; fully faded pixels stay
-                        // transparent (all zero), so skip the weights there
-                        let a = (1.0 - (nearest.sqrt() - 10.0) / 8.0).clamp(0.0, 1.0);
+                        // fade out away from sampled populations (full colour within about 500 km,
+                        // none past about 1000 km), so unsampled areas aren't painted with a
+                        // guess; fully faded pixels stay transparent, so skip the weights there
+                        let a = (1.0 - (nearest.sqrt() - FADE_START) / FADE_LEN).clamp(0.0, 1.0);
                         if a == 0.0 {
                             continue;
                         }
-                        for wk in wv.iter_mut() {
+                        for (wk, p) in wv.iter_mut().zip(&pts) {
                             let d2 = *wk;
-                            *wk = 1.0 / ((d2 + 0.5) * (d2 + 0.5));
+                            *wk = p.3 / ((d2 + 0.5) * (d2 + 0.5));
                         }
                         // running sums in point order
                         let (mut sw, mut sv) = (0.0, 0.0);
-                        for (&wgt, &(_, _, pt)) in wv.iter().zip(&pts) {
+                        for (&wgt, &(_, _, pt, _)) in wv.iter().zip(&pts) {
                             sw += wgt;
                             sv += wgt * pt;
                         }
@@ -652,9 +664,12 @@ pub fn load_places_with_extras(path: &str, extra: &str) -> Result<HashMap<String
 ///   got swapped. The genotypes are Kurdish (G25 right next to Kurd_Iraq), so it belongs where the
 ///   KRD samples are, which is within 250 km of official Kurd dots, so it gets no estimated dot.
 /// - Kurd_USSR: latitude and longitude are swapped in AADR (44.58, 39.42 is in Adygea).
+/// - Cuba_CuevaEsqueletos_Ceramic: the longitude lost its minus sign (77.84 E is in the Himalayas).
+/// More candidates: `cargo test --release audit_locations -- --ignored --nocapture`.
 pub const PLACE_FIXES: &[(&str, Option<(f64, f64)>)] = &[
     ("Kurd_WGA (est.)", None),
     ("Kurd_USSR", Some((39.42, 44.58))),
+    ("Cuba_CuevaEsqueletos_Ceramic", Some((21.562, -77.844))),
 ];
 
 /// AADR group labels whose annotated coordinates are wrong, with the right ones (lat, lon).

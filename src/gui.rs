@@ -97,6 +97,7 @@ extern "C" {
     fn CGContextStrokeEllipseInRect(c: CG, r: NSRect);
     fn CGContextSetLineCap(c: CG, cap: i32);
     fn CGContextSetLineJoin(c: CG, join: i32);
+    fn CGContextSetLineDash(c: CG, phase: f64, lengths: *const f64, count: usize);
     fn CGPathCreateMutable() -> CG;
     fn CGPathMoveToPoint(p: CG, m: *const c_void, x: f64, y: f64);
     fn CGPathAddLineToPoint(p: CG, m: *const c_void, x: f64, y: f64);
@@ -520,13 +521,13 @@ unsafe fn draw_text(s: &str, x: f64, y: f64, font: Id, col: Id) {
     msg![(); ns(s), "drawAtPoint:withAttributes:", NSPoint { x, y } => NSPoint, attrs => Id];
 }
 /// white text on a soft dark halo (like heatmap sites' labels), smooth edges
-unsafe fn draw_dark_halo(s: &str, x: f64, y: f64, font: Id) {
+unsafe fn draw_dark_halo(s: &str, x: f64, y: f64, font: Id, grey: f64) {
     let shadow = msg![Id; msg![Id; cls("NSShadow"), "alloc"], "init"];
     msg![(); shadow, "setShadowColor:", color(0.08, 0.08, 0.1, 1.0) => Id];
     msg![(); shadow, "setShadowBlurRadius:", 1.6f64 => f64];
     msg![(); shadow, "setShadowOffset:", NSSize { w: 0.0, h: 0.0 } => NSSize];
     let keys = [ns("NSFont"), ns("NSColor"), ns("NSShadow")];
-    let vals = [font, color(1.0, 1.0, 1.0, 1.0), shadow];
+    let vals = [font, color(grey, grey, grey, 1.0), shadow];
     let attrs = msg![Id; cls("NSDictionary"), "dictionaryWithObjects:forKeys:count:", vals.as_ptr() => *const Id, keys.as_ptr() => *const Id, 3usize => usize];
     for _ in 0..3 {
         msg![(); ns(s), "drawAtPoint:withAttributes:", NSPoint { x, y } => NSPoint, attrs => Id];
@@ -592,7 +593,11 @@ unsafe fn draw_pin(c: CG, x: f64, y: f64, zoomed: f64, est: bool, col: (f64, f64
     CGContextSetRGBStrokeColor(c, col.0 * d, col.1 * d, col.2 * d, 1.0);
     CGContextSetLineWidth(c, if est { 1.0 } else { 0.8 });
     if est {
-        CGContextDrawPath(c, 2); // estimated: rim only
+        // estimated: dashed rim only
+        let dash = [r * 0.55, r * 0.5];
+        CGContextSetLineDash(c, 0.0, dash.as_ptr(), 2);
+        CGContextDrawPath(c, 2);
+        CGContextSetLineDash(c, 0.0, std::ptr::null(), 0);
     } else {
         CGContextSetRGBFillColor(c, col.0, col.1, col.2, 1.0);
         CGContextDrawPath(c, 3);
@@ -755,7 +760,8 @@ extern "C" fn map_draw(this: Id, _cmd: Sel, _dirty: NSRect) {
                     let inside = lx >= 2.0 && ly >= 2.0 && lx + tw <= b.w - 2.0 && ly + th <= b.h - 2.0;
                     let hits_dot = dots.iter().any(|&(dx, dy)| overlaps(r, rect(dx - 2.5, dy - 2.5, 5.0, 5.0)));
                     if inside && !hits_dot && !placed.iter().any(|q| overlaps(r, *q)) {
-                        draw_dark_halo(&p.name, lx + 1.0, ly, label_font);
+                        // estimated populations get dimmer labels than official ones
+                        draw_dark_halo(&p.name, lx + 1.0, ly, label_font, if p.name.ends_with("(est.)") { 0.72 } else { 1.0 });
                         placed.push(r);
                         shown += 1;
                         break;
@@ -766,7 +772,11 @@ extern "C" fn map_draw(this: Id, _cmd: Sel, _dirty: NSRect) {
             if let Some(i) = hover {
                 if let Some(p) = h.points.get(i) {
                     let (x, y) = (p.x * v.k + v.tx, p.y * v.k + v.ty);
-                    let t = format!("{} · {:.4}  (#{})", p.name, p.dist, i + 1);
+                    let t = if p.name.ends_with("(est.)") {
+                        format!("{} · {:.4}  (#{}) · estimated by this app, no official G25 coordinates", p.name, p.dist, i + 1)
+                    } else {
+                        format!("{} · {:.4}  (#{})", p.name, p.dist, i + 1)
+                    };
                     let tw = text_width(&t, small) + 14.0;
                     let bx = (x + 10.0).min(b.w - tw - 4.0);
                     draw_panel(rect(bx, y - 30.0, tw, 22.0));
@@ -777,8 +787,8 @@ extern "C" fn map_draw(this: Id, _cmd: Sel, _dirty: NSRect) {
             draw_text(&s.heat_note, 20.0, 20.0, ui_font(14.0), text_col);
         }
         // legend (12 steps)
-        let (lx, ly) = (12.0, b.h - 46.0);
-        draw_panel(rect(lx, ly, 12.0 * 11.0 + 16.0 + 92.0, 36.0));
+        let (lx, ly) = (12.0, b.h - 60.0);
+        draw_panel(rect(lx, ly, 12.0 * 11.0 + 16.0 + 92.0, 50.0));
         // pin key, drawn like the map's pins: filled = official G25, rim only = estimated layer
         let kx = lx + 12.0 * 11.0 + 22.0;
         let (pr, pg, pb) = rgb(geo::RAMP[3]);
@@ -794,6 +804,7 @@ extern "C" fn map_draw(this: Id, _cmd: Sel, _dirty: NSRect) {
         let lab = sys_color("secondaryLabelColor");
         draw_text("Closest", lx + 8.0, ly + 17.0, mono(10.0), lab);
         draw_text("Distant", lx + 12.0 * 11.0 - 32.0, ly + 17.0, mono(10.0), lab);
+        draw_text("Pale land: no samples within ~1000 km", lx + 8.0, ly + 32.0, ui_font(10.5), lab);
     }
 }
 
@@ -919,7 +930,7 @@ extern "C" fn bars_draw(this: Id, _cmd: Sel, _dirty: NSRect) {
         let mut y = 62.0;
         let bar_w = b.w - 16.0 - 70.0 - 16.0;
         for (name, v) in r.rows.iter() {
-            if y > b.h - 40.0 {
+            if y > b.h - 58.0 {
                 break;
             }
             draw_text(&format!("{:>5.1}", v * 100.0), 16.0, y + 2.0, mono(13.0), prim);
@@ -930,6 +941,8 @@ extern "C" fn bars_draw(this: Id, _cmd: Sel, _dirty: NSRect) {
             CGContextFillRect(c, rect(70.0, y + 15.0, bar_w * v.clamp(0.0, 1.0), 6.0));
             y += 34.0;
         }
+        draw_text("One good fit, not the only one: similar sources can trade shares, so read small percentages loosely.",
+            16.0, b.h - 42.0, ui_font(11.5), sec);
         draw_text(&r.footer, 16.0, b.h - 24.0, mono(11.0), sec);
     }
 }
@@ -1273,7 +1286,7 @@ fn builtin_label(i: isize) -> String {
     if i >= G25_BASE {
         format!("Built-in: {} G25 averages · {n} populations", data::G25_SETS[(i - G25_BASE) as usize])
     } else {
-        format!("Built-in: {} · {n} populations", data::BUILTIN[i as usize])
+        format!("Built-in: {} (approximate era set) · {n} populations", data::BUILTIN[i as usize])
     }
 }
 
@@ -1957,10 +1970,12 @@ unsafe fn build_modeling(p: Id, w: f64, h: f64) -> Modeling {
     let builtin_toggle = toggle_checkbox(p, "Show built-in databases", place(h, 28.0, 194.0, 200.0, 18.0), "toggleBuiltin:", M_BOTTOM);
     msg![(); builtin_toggle, "setState:", 1isize => isize];
     let illus_toggle = toggle_checkbox(p, "IllustrativeDNA eras (instead of Modern / Ancient)", place(h, 236.0, 194.0, 360.0, 18.0), "toggleIllus:", M_BOTTOM);
+    msg![(); illus_toggle, "setToolTip:", ns(data::ERA_NOTE) => Id];
     let builtin_g25 = segmented(p, &data::G25_SETS, place(h, 28.0, 214.0, 260.0, 28.0), "pickBuiltinG25:", M_BOTTOM);
     msg![(); builtin_g25, "setSelectedSegment:", -1isize => isize];
     msg![(); builtin_g25, "setToolTip:", ns(&format!("G25 population averages: Modern ({}) · Ancient ({})", data::count_lines(data::MODERN), data::count_lines(data::ANCIENT))) => Id];
     let builtin = segmented(p, &data::BUILTIN, place(h, 28.0, 214.0, (w - 56.0).min(700.0), 28.0), "pickBuiltin:", M_BOTTOM);
+    msg![(); builtin, "setToolTip:", ns(data::ERA_NOTE) => Id];
     msg![(); builtin, "setSelectedSegment:", -1isize => isize];
     msg![(); builtin, "setHidden:", true => bool];
 
@@ -3809,6 +3824,7 @@ extern "C" fn on_qp_run(_this: Id, _cmd: Sel, _sender: Id) {
         match qpadm::fit(&f2, &target, &sources, &right, &st) {
             Ok(r) => {
                 rep.verdict = qpadm::verdict(&r, &st);
+                rep.notes.extend(qpadm::reliability_notes(&r));
                 // drop each source in turn
                 if sources.len() >= 2 {
                     for i in 0..sources.len() {
@@ -3818,7 +3834,7 @@ extern "C" fn on_qp_run(_this: Id, _cmd: Sel, _sender: Id) {
                         }
                     }
                     if let Some(d) = rep.drops.iter().filter(|d| d.passes(&st)).max_by(|a, b| a.p.partial_cmp(&b.p).unwrap()) {
-                        rep.verdict.push_str(&format!(" A simpler model without {} also fits (p = {}).",
+                        rep.verdict.push_str(&format!(" A simpler model without {} is not rejected either (p = {}).",
                             sources.iter().find(|s| !d.sources.contains(s)).cloned().unwrap_or_default(), qpadm::fmt_p(d.p)));
                     }
                 }
@@ -3827,7 +3843,7 @@ extern "C" fn on_qp_run(_this: Id, _cmd: Sel, _sender: Id) {
                 if !rep.drops.is_empty() {
                     text.push_str("\nDrop one source:\n");
                     for d in &rep.drops {
-                        text.push_str(&format!("  {}: p = {}{}\n", d.sources.join(" + "), qpadm::fmt_p(d.p), if d.passes(&st) { " (fits)" } else { "" }));
+                        text.push_str(&format!("  {}: p = {}{}\n", d.sources.join(" + "), qpadm::fmt_p(d.p), if d.passes(&st) { " (not rejected)" } else { "" }));
                     }
                 }
                 if let Some((g, dist)) = &rep.g25 {
@@ -3895,13 +3911,23 @@ extern "C" fn on_qp_rotate(_this: Id, _cmd: Sel, _sender: Id) {
         rep.verdict = if passing == 0 {
             "No model fits. Try other or more varied sources (Suggest from G25), or another Right set.".into()
         } else {
-            format!("{passing} model{} fit{}. The simplest fitting model is listed first.", if passing == 1 { "" } else { "s" }, if passing == 1 { "s" } else { "" })
+            let mut v = format!("{passing} of {} model{} not rejected. The simplest is listed first.", rep.rotation_tried, if rep.rotation_tried == 1 { "" } else { "s" });
+            if passing > 1 {
+                v.push_str(" When several pass, the data can't tell them apart: treat close p-values as ties, and prefer models that pass with more than one Right set.");
+            }
+            if passing * 3 > rep.rotation_tried && passing > 2 {
+                v.push_str(" That's a large share, which usually means this Right set can't separate these sources.");
+            }
+            v
         };
+        if let Some(best) = res.first() {
+            rep.notes.extend(qpadm::reliability_notes(best).into_iter().filter(|n| n.0 == 0));
+        }
         res.truncate(passing.max(5).min(25));
         let mut text = format!("qpAdm rotation · target {target}\nRight: {}\n{}\n\n", right.join(", "), rep.verdict);
         for r in &res {
             let w: Vec<String> = r.sources.iter().zip(&r.weights).map(|(s, w)| format!("{:.1}% {s}", w * 100.0)).collect();
-            text.push_str(&format!("p = {:<8} {}{}\n", qpadm::fmt_p(r.p), w.join(" + "), if r.passes(&st) { "" } else { "  (fails)" }));
+            text.push_str(&format!("p = {:<8} {}{}\n", qpadm::fmt_p(r.p), w.join(" + "), if r.passes(&st) { "" } else { "  (rejected)" }));
         }
         rep.text = text;
         rep.rotation = res;
@@ -3971,6 +3997,9 @@ extern "C" fn on_qp_export(_this: Id, _cmd: Sel, _sender: Id) {
 const QP_COLORS: [(f64, f64, f64); 6] = [(0.20, 0.47, 0.80), (0.89, 0.47, 0.16), (0.30, 0.65, 0.35), (0.74, 0.30, 0.55), (0.55, 0.45, 0.30), (0.40, 0.40, 0.75)];
 
 /// lines a note wraps to at this width (roughly 6.6 px per character at 12.5 pt)
+fn verdict_box_h(t: &str, w: f64) -> f64 {
+    qp_note_lines(t, w + 20.0) * 18.0 + 12.0
+}
 fn qp_note_lines(t: &str, w: f64) -> f64 {
     ((t.chars().count() as f64 * 7.4) / (w - 60.0).max(100.0)).ceil().max(1.0)
 }
@@ -4059,7 +4088,7 @@ unsafe fn draw_pie(c: CG, m: &qpadm::ModelResult, w: f64, y0: f64) {
 fn qp_height(r: &QpReport, w: f64) -> f64 {
     let mut h = 44.0 + r.notes.iter().map(|n| qp_note_lines(&n.1, w) * 18.0 + 4.0).sum::<f64>();
     if !r.verdict.is_empty() {
-        h += 48.0;
+        h += verdict_box_h(&r.verdict, w) + 8.0;
     }
     if let Some(m) = &r.model {
         h += 30.0 + m.sources.len() as f64 * 46.0;
@@ -4107,11 +4136,12 @@ extern "C" fn qp_draw(this: Id, _cmd: Sel, _dirty: NSRect) {
         if !r.verdict.is_empty() {
             let passed = r.model.as_ref().map(|m| m.feasible && m.p >= 0.05).unwrap_or(r.rotation.iter().any(|m| m.feasible && m.p >= 0.05) || r.title.contains("all good"));
             let (bg, fg) = if passed { ((0.918, 0.953, 0.871), (0.153, 0.314, 0.039)) } else { ((0.988, 0.886, 0.878), (0.600, 0.110, 0.090)) };
-            let path = msg![Id; cls("NSBezierPath"), "bezierPathWithRoundedRect:xRadius:yRadius:", rect(12.0, y + 2.0, b.w - 24.0, 40.0) => NSRect, 8.0f64 => f64, 8.0f64 => f64];
+            let vh = verdict_box_h(&r.verdict, b.w);
+            let path = msg![Id; cls("NSBezierPath"), "bezierPathWithRoundedRect:xRadius:yRadius:", rect(12.0, y + 2.0, b.w - 24.0, vh) => NSRect, 8.0f64 => f64, 8.0f64 => f64];
             msg![(); color(bg.0, bg.1, bg.2, 1.0), "setFill"];
             msg![(); path, "fill"];
-            draw_wrapped(&r.verdict, rect(22.0, y + 6.0, b.w - 44.0, 36.0), ui_font(13.0), color(fg.0, fg.1, fg.2, 1.0));
-            y += 48.0;
+            draw_wrapped(&r.verdict, rect(22.0, y + 6.0, b.w - 44.0, vh - 4.0), ui_font(13.0), color(fg.0, fg.1, fg.2, 1.0));
+            y += vh + 8.0;
         }
         // weight bars with +/- 1 SE whiskers
         if let Some(m) = &r.model {
@@ -4148,7 +4178,7 @@ extern "C" fn qp_draw(this: Id, _cmd: Sel, _dirty: NSRect) {
             y += 34.0;
             for d in &r.drops {
                 let ok = d.passes(&qpadm::Settings::default());
-                draw_text(&format!("{}   p = {}{}", d.sources.join(" + "), qpadm::fmt_p(d.p), if ok { "   fits" } else { "" }), 24.0, y, ui_font(12.5), if ok { lab } else { sec });
+                draw_text(&format!("{}   p = {}{}", d.sources.join(" + "), qpadm::fmt_p(d.p), if ok { "   not rejected" } else { "" }), 24.0, y, ui_font(12.5), if ok { lab } else { sec });
                 y += 22.0;
             }
         }

@@ -328,12 +328,35 @@ pub fn fit(target: &[f64], sources: &Sheet, o: &Options) -> Result<Fit, String> 
     Ok(chosen)
 }
 
+/// Seed from the inputs (FNV-1a), so the same target, sources and settings always give the
+/// same fit. Vahaduo seeds from the clock, which makes results change from run to run.
+fn input_seed(target: &[f64], sources: &Sheet, o: &Options) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |bytes: &[u8]| {
+        for &b in bytes {
+            h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    for x in target {
+        eat(&x.to_bits().to_le_bytes());
+    }
+    for (label, row) in sources.labels.iter().zip(&sources.rows) {
+        eat(label.as_bytes());
+        for x in row {
+            eat(&x.to_bits().to_le_bytes());
+        }
+    }
+    eat(&[o.npop as u8, o.recalc as u8]);
+    eat(&o.cycles.to_bits().to_le_bytes());
+    eat(&o.adc.to_bits().to_le_bytes());
+    h | 1
+}
+
 fn fit_once(target: &[f64], sources: &Sheet, o: &Options) -> Result<Fit, String> {
     if target.len() != sources.rows[0].len() {
         return Err(format!("target has {} values but sources have {}", target.len(), sources.rows[0].len()));
     }
-    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1) | 1;
-    let mut rng = Rng(seed);
+    let mut rng = Rng(input_seed(target, sources, o));
     let t: Vec<f64> = target.iter().map(|x| x / SLOTS as f64).collect();
     let s: Vec<Vec<f64>> = sources.rows.iter().map(|r| r.iter().map(|x| x / SLOTS as f64).collect()).collect();
 

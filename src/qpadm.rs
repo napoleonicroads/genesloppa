@@ -674,17 +674,36 @@ pub fn same_to_right(f2: &F2, a: &str, b: &str, right: &[String], st: &Settings)
 }
 
 // ------------------------------------------------------------------ verdicts, presets, helpers
-/// One plain-language line for a model.
+/// One plain-language line for a model. A pass only means the data can't rule the model out.
 pub fn verdict(r: &ModelResult, st: &Settings) -> String {
     let p = fmt_p(r.p);
     if r.p >= st.p_threshold && r.feasible {
-        format!("Fits (p = {p}). This mix of sources explains your target with these Right populations.")
+        format!("Not rejected (p = {p}). These sources can explain your target with this Right set; that makes the model possible, not proven.")
     } else if r.p >= st.p_threshold {
-        format!("Fits statistically (p = {p}) but a weight is below 0% or above 100%, so the mix isn't possible as stated. Try other sources.")
+        format!("Not rejected (p = {p}), but a weight is below 0% or above 100%, so the mix isn't possible as stated. Try other sources.")
     } else {
         format!("Rejected (p = {p}). The target has ancestry these sources don't capture, or a source is a poor proxy.")
     }
 }
+
+/// Cautions about how much a result can be trusted: few SNPs, wide standard errors.
+/// (level, text) like the pre-flight notes: 0 = info, 1 = warning.
+pub fn reliability_notes(r: &ModelResult) -> Vec<(u8, String)> {
+    let mut v = vec![];
+    if r.n_snps < 200_000 {
+        v.push((0, format!(
+            "Low power: {}k SNPs, against about 1.2 million in published qpAdm work. With this little data qpAdm often can't reject a wrong model, so a pass is weak evidence. Compare several Right sets before trusting one.",
+            r.n_snps / 1000)));
+    }
+    let worst = r.se.iter().cloned().fold(0.0f64, f64::max);
+    if worst > 0.08 {
+        v.push((1, format!(
+            "The weights are uncertain: one has a standard error of ±{:.0} points, so the true share could be roughly {:.0} points either way.",
+            worst * 100.0, 2.0 * worst * 100.0)));
+    }
+    v
+}
+
 pub fn fmt_p(p: f64) -> String {
     if p < 1e-4 { format!("{p:.1e}") } else { format!("{p:.4}") }
 }
@@ -709,7 +728,7 @@ pub const RIGHT_PRESETS: [(&str, &str, &[&str]); 6] = [
 pub fn admixtools2_script(target: &str, sources: &[String], right: &[String], st: &Settings) -> String {
     let q = |v: &[String]| v.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(", ");
     let mut s = String::new();
-    s.push_str("# qpAdm model exported from the G25 app, for ADMIXTOOLS 2 (R)\n");
+    s.push_str("# qpAdm model exported from genesloppa, for ADMIXTOOLS 2 (R)\n");
     s.push_str("# install: remotes::install_github(\"uqrmaie1/admixtools\")\nlibrary(admixtools)\n\n");
     s.push_str("prefix <- \"path/to/v66.p1_HO.aadr.patch.PUB\"   # AADR genotype files (.geno/.snp/.ind)\n");
     if target == MY_DNA {

@@ -411,3 +411,55 @@ fn qpadm_your_own_populations() {
     qpadm::remove_custom("Test_Family");
     assert!(qpadm::custom("Test_Family").is_none() && qpadm::custom("Test_Mix").is_some());
 }
+
+/// Location audit: lists populations whose closest genetic matches are all placed far away,
+/// which is how mislabelled AADR locations show up (Kurd_WGA sat in Algeria). Prints
+/// candidates to check by hand; run with `cargo test --release audit_locations -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn audit_locations() {
+    use crate::{data, geo};
+    let extras = "dist/extras";
+    let places = geo::load_places_with_extras("", &format!("{extras}/extra_places.tsv")).unwrap();
+    let mut sheet = format!("{}\n{}", data::MODERN, data::ANCIENT);
+    for f in ["extra_modern.txt", "extra_ancient.txt"] {
+        if let Ok(t) = std::fs::read_to_string(format!("{extras}/{f}")) {
+            sheet.push('\n');
+            sheet.push_str(&t);
+        }
+    }
+    let pops: Vec<(String, Vec<f64>, (f64, f64))> = sheet
+        .lines()
+        .filter_map(|l| {
+            let mut it = l.split(',');
+            let name = it.next()?.trim().to_string();
+            let v: Vec<f64> = it.filter_map(|x| x.trim().parse().ok()).collect();
+            let at = *places.get(&name)?;
+            (v.len() == 25 && !geo::off_heatmap(&name)).then_some((name, v, at))
+        })
+        .collect();
+    let km = |a: (f64, f64), b: (f64, f64)| {
+        let (la1, lo1, la2, lo2) = (a.0.to_radians(), a.1.to_radians(), b.0.to_radians(), b.1.to_radians());
+        let h = ((la2 - la1) / 2.0).sin().powi(2) + la1.cos() * la2.cos() * ((lo2 - lo1) / 2.0).sin().powi(2);
+        2.0 * 6371.0 * h.sqrt().asin()
+    };
+    let mut flagged = vec![];
+    for (i, (name, v, at)) in pops.iter().enumerate() {
+        let mut near: Vec<(f64, usize)> = pops
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| *j != i)
+            .map(|(j, p)| (p.1.iter().zip(v).map(|(a, b)| (a - b).powi(2)).sum::<f64>().sqrt(), j))
+            .collect();
+        near.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let closest_km = near.iter().take(6).map(|&(_, j)| km(*at, pops[j].2)).fold(f64::MAX, f64::min);
+        if closest_km > 2500.0 {
+            flagged.push((closest_km, name.clone(), *at, pops[near[0].1].0.clone()));
+        }
+    }
+    flagged.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    println!("{} of {} placed populations have no close genetic match within 2500 km:", flagged.len(), pops.len());
+    for (d, n, at, best) in &flagged {
+        println!("{d:>6.0} km  {n} at ({:.2}, {:.2}); closest match {best}", at.0, at.1);
+    }
+}

@@ -12,6 +12,12 @@ pub fn g25_set(index: usize) -> &'static str {
 }
 
 /// IllustrativeDNA era sets (off by default; they replace Modern/Ancient when shown).
+/// Shown as a tooltip on the era controls: how the sets were made, and their limits.
+pub const ERA_NOTE: &str = "Approximate era sets, sorted by hand from Illustrative DNA samples and groups. \
+Each sample goes in the era that covers most of its date range (Bronze Age 3300-1200 BC, Iron Age 1200 BC-AD 1, \
+Late Antiquity 100 BC-AD 700, Middle Ages AD 500-1500), so the eras overlap, samples near a boundary could \
+fit either, and post-1500 samples are left out. Use them for a first look; for anything you want to rely on, \
+use the Ancient G25 averages.";
 pub const BUILTIN: [&str; 6] = ["Mesolithic", "Neolithic", "Bronze Age", "Iron Age", "Late Antiquity", "Middle Ages"];
 const ERAS: [&str; 6] = [
     include_str!("../data/era_mesolithic.txt"),

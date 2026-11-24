@@ -28,6 +28,9 @@ pub struct Report {
     pub within: f64,
     pub allele_r: f64,
     pub nearest: Vec<(String, f64)>,
+    /// for each of `nearest`: share of the reference samples' real conversion errors that,
+    /// added to your result, still leave it the closest population
+    pub closest_share: Vec<f64>,
 }
 
 impl Report {
@@ -43,12 +46,19 @@ impl Report {
         let (q, r) = self.quality();
         let mut s = format!(
             "Quality: {q} (error {r:.2}× normal within-population spread)\n\
+             Expected error: about {:.3} (9 in 10 test samples within {:.3}). The line above has 6 decimals\n\
+             because other tools expect that format; only the first 2 or 3 are meaningful.\n\
              SNPs: {} in your file, {} shared with the reference, {} used\n\
-             References: {} samples, {} principal components\n\nClosest populations:\n",
-            self.user_snps, self.overlap, self.used_snps, self.refs, self.pcs
+             References: {} samples, {} principal components\n\n\
+             Closest populations. The % is how often each one still comes out closest when the\n\
+             converter's real errors (measured on {} reference samples) are taken into account;\n\
+             names with similar % can't be told apart.\n",
+            self.cv_median, self.cv_p90, self.user_snps, self.overlap, self.used_snps, self.refs, self.pcs, self.refs
         );
-        for (p, d) in &self.nearest {
-            s.push_str(&format!("  {d:.4}   {p}\n"));
+        for (i, (p, d)) in self.nearest.iter().enumerate() {
+            let share = self.closest_share.get(i).copied().unwrap_or(0.0);
+            let pct = if share >= 0.005 { format!("{:>3.0}%", share * 100.0) } else { "   -".into() };
+            s.push_str(&format!("  {d:.3}  {pct}   {p}\n"));
         }
         s
     }
@@ -217,11 +227,16 @@ pub fn convert(pack: &Pack, user: &RawGenotypes, name: &str, s: &Settings, progr
         order.swap(i, (rng.next_u64() % (i as u64 + 1)) as usize);
     }
     let mut errs = vec![0.0; n];
+    let mut resid = vec![[0.0; G25_DIMS]; n];
     for fold in 0..5 {
         let train: Vec<usize> = order.iter().enumerate().filter(|(p, _)| p % 5 != fold).map(|(_, &i)| i).collect();
         let beta = ridge(&feats, &y, &train, lambda);
         for (_, &i) in order.iter().enumerate().filter(|(p, _)| p % 5 == fold) {
-            errs[i] = dist(&predict(&feats[i], &beta), &y[i]);
+            let pred = predict(&feats[i], &beta);
+            errs[i] = dist(&pred, &y[i]);
+            for d in 0..G25_DIMS {
+                resid[i][d] = pred[d] - y[i][d];
+            }
         }
     }
     let mut groups: HashMap<u32, Vec<usize>> = HashMap::new();
@@ -246,7 +261,21 @@ pub fn convert(pack: &Pack, user: &RawGenotypes, name: &str, s: &Settings, progr
 
     let mut nearest: Vec<(String, f64)> = pack.pops.iter().map(|p| (p.name.clone(), dist(&coords, &p.coords))).collect();
     nearest.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    // how steady is the ranking? take each reference's real conversion error away from your
+    // result and see which population comes out closest
+    let by_name: HashMap<&str, &Coords> = pack.pops.iter().map(|p| (p.name.as_str(), &p.coords)).collect();
+    let cand: Vec<&Coords> = nearest.iter().take(200).map(|(name, _)| by_name[name.as_str()]).collect();
+    let mut wins = vec![0usize; cand.len()];
+    for r in &resid {
+        let mut t = coords;
+        for d in 0..G25_DIMS {
+            t[d] -= r[d];
+        }
+        let best = (0..cand.len()).min_by(|&a, &b| dist(&t, cand[a]).partial_cmp(&dist(&t, cand[b])).unwrap()).unwrap_or(0);
+        wins[best] += 1;
+    }
     nearest.truncate(15);
+    let closest_share: Vec<f64> = wins.iter().take(nearest.len()).map(|&w| w as f64 / resid.len().max(1) as f64).collect();
 
     Ok(Report {
         name: name.to_string(),
@@ -261,6 +290,7 @@ pub fn convert(pack: &Pack, user: &RawGenotypes, name: &str, s: &Settings, progr
         within: percentile(&mut within, 0.5),
         allele_r,
         nearest,
+        closest_share,
     })
 }
 

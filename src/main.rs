@@ -198,6 +198,9 @@ fn main() {
             }
             println!("chisq {:.2}  dof {}  p {}", r.chisq, r.dof, qpadm::fmt_p(r.p));
             println!("{}", qpadm::verdict(&r, &st));
+            for (_, n) in qpadm::reliability_notes(&r) {
+                println!("note: {n}");
+            }
         }
         "places" => {
             let f = flags(&args[1..]);
