@@ -52,8 +52,20 @@ xattr -dr com.apple.quarantine /Applications/genesloppa.app
 
 ## Building
 
-You need macOS on Apple Silicon and Rust. The app also needs a reference pack, which is built
-from the AADR "HO" dataset and a Global25 individuals sheet. Neither is in this repo.
+This is only for working on the code. The download above is ready to use and already contains
+everything.
+
+You need macOS on Apple Silicon and Rust. The app also needs a reference pack (the genotypes
+behind the converter and qpAdm). It's too big for this repo, but the release download has one
+inside, so the quickest way is to install the app and build against its pack:
+
+```
+scripts/make_app.sh --pack /Applications/genesloppa.app/Contents/Resources/reference.g25pack
+open dist/genesloppa.app
+```
+
+To build the pack yourself instead, you need the AADR "HO" dataset and a Global25 individuals
+sheet:
 
 ```
 scripts/make_app.sh --aadr path/to/v66.p1_HO.aadr.patch.PUB \
