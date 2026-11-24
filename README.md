@@ -50,7 +50,7 @@ xattr -dr com.apple.quarantine /Applications/genesloppa.app
 - **Health info**: a short list of well-studied SNPs. These are common variants that nudge
   the odds, not a diagnosis.
 
-## Building
+## Building (ONLY FOR DEVELOPERS!)
 
 This is only for working on the code. The download above is ready to use and already contains
 everything.
